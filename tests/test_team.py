@@ -87,7 +87,7 @@ async def test_agent_calls_tools_then_answers(make_team):
 async def test_agent_can_consult_a_peer_agent(make_team):
     gpt = ScriptedModel(
         [
-            [function_call("ask_grok", {"input": "Is 7919 prime?"}, call_id="call_1")],
+            [function_call("ask_grok", {"task": "Is 7919 prime?"}, call_id="call_1")],
             [assistant_message("Yes, and Grok agrees: 7919 is prime.")],
         ]
     )

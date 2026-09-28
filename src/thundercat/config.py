@@ -11,6 +11,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal, cast
 
 from dotenv import find_dotenv, load_dotenv
 from openai.types.shared import Reasoning
@@ -28,6 +29,8 @@ DEFAULT_MAX_TURNS = 25
 REQUEST_TIMEOUT_SECONDS = 3600.0
 
 REASONING_MODES = ("standard", "pro")
+Backend = Literal["auto", "api", "cli"]
+BACKENDS: tuple[Backend, ...] = ("auto", "api", "cli")
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
@@ -48,9 +51,13 @@ class AgentSpec:
     """Environment variable that holds the API key, shown in error messages."""
     api_key: str | None = field(repr=False)
     base_url: str | None
-    reasoning_effort: str | None
+    reasoning_effort: str
+    cli_program: str
+    """The vendor's agent CLI, used when there is no API key: codex or grok."""
+    backend: Backend = "auto"
+    """"api" (needs the key), "cli" (needs the vendor CLI signed in), or "auto": api if keyed."""
     reasoning_mode: str | None = None
-    """OpenAI only: "pro" makes the model do more work per answer (and cost more)."""
+    """OpenAI API only: "pro" makes the model do more work per answer (and cost more)."""
 
     @property
     def configured(self) -> bool:
@@ -110,6 +117,13 @@ def _get_reasoning_mode(env: Mapping[str, str], key: str) -> str | None:
     return value
 
 
+def _get_backend(env: Mapping[str, str], key: str) -> Backend:
+    value = (_get(env, key) or "auto").lower()
+    if value not in BACKENDS:
+        raise ConfigError(f"{key} must be one of {', '.join(BACKENDS)}; got {value!r}")
+    return cast(Backend, value)
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     """Build settings from `env` (defaults to the process environment)."""
     env = os.environ if env is None else env
@@ -125,6 +139,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                 env, "THUNDERCAT_GPT_REASONING_EFFORT", DEFAULT_GPT_REASONING_EFFORT
             ),
             reasoning_mode=_get_reasoning_mode(env, "THUNDERCAT_GPT_REASONING_MODE"),
+            backend=_get_backend(env, "THUNDERCAT_GPT_BACKEND"),
+            cli_program=_get(env, "THUNDERCAT_GPT_CLI") or "codex",
         ),
         "grok": AgentSpec(
             name="grok",
@@ -136,6 +152,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             reasoning_effort=_get_reasoning_effort(
                 env, "THUNDERCAT_GROK_REASONING_EFFORT", DEFAULT_GROK_REASONING_EFFORT
             ),
+            backend=_get_backend(env, "THUNDERCAT_GROK_BACKEND"),
+            cli_program=_get(env, "THUNDERCAT_GROK_CLI") or "grok",
         ),
     }
     return Settings(

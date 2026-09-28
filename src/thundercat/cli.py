@@ -17,8 +17,10 @@ from agents import (
 from openai import APIError
 from openai.types.responses import ResponseTextDeltaEvent
 
+from . import vendor_cli
 from .config import ConfigError, load_dotenv_file, load_settings
-from .team import AgentNotConfiguredError, Team, UnknownAgentError
+from .team import AgentNotConfiguredError, BackendError, Team, UnknownAgentError
+from .vendor_cli import VendorCliError
 
 EXIT_COMMANDS = {"/exit", "/quit", "exit", "quit"}
 
@@ -30,7 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    commands.add_parser("agents", help="show the agents and whether their API keys are set")
+    commands.add_parser("agents", help="show the agents and how each one will run")
+
+    login = commands.add_parser(
+        "login", help="sign in to an agent's vendor CLI with your account (no API key needed)"
+    )
+    login.add_argument("agent", help="agent to sign in for: gpt (ChatGPT) or grok (xAI)")
 
     ask = commands.add_parser("ask", help="give an agent one task and print its answer")
     ask.add_argument("agent", help="agent to run: gpt or grok")
@@ -72,6 +79,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         team = Team(load_settings())
         if args.command == "agents":
             return show_agents(team)
+        if args.command == "login":
+            return vendor_cli.login(team.spec(args.agent))
         if args.command == "mcp":
             from .mcp_server import create_server
 
@@ -87,7 +96,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ConfigError, AgentNotConfiguredError, UnknownAgentError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    except (APIError, AgentsException) as exc:
+    except (APIError, AgentsException, BackendError, VendorCliError) as exc:
         print(f"\nerror: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
@@ -97,15 +106,34 @@ def main(argv: Sequence[str] | None = None) -> int:
 def show_agents(team: Team) -> int:
     for name in team.names:
         spec = team.spec(name)
-        reasoning = spec.reasoning_effort or "default"
+        reasoning = spec.reasoning_effort
         if spec.reasoning_mode:
             reasoning += f" ({spec.reasoning_mode} mode)"
-        key = "key set" if spec.configured else f"missing {spec.api_key_env}"
-        print(f"{name:<5} {spec.label:<13} {spec.model:<14} reasoning={reasoning:<18} {key}")
+        runs_via = _runs_via(team, name)
+        print(f"{name:<5} {spec.label:<13} {spec.model:<12} reasoning={reasoning:<7} {runs_via}")
     return 0
 
 
+def _runs_via(team: Team, name: str) -> str:
+    spec = team.spec(name)
+    product = vendor_cli.vendor(spec).product
+    if team.backend(name) == "api":
+        if spec.configured:
+            return "via API key"
+        if spec.backend == "api":
+            return f"not set up: set {spec.api_key_env}"
+        return f"not set up: set {spec.api_key_env}, or install {product} and sign in"
+    if vendor_cli.find_executable(spec) is None:
+        return f"not set up: {product} is not installed"
+    if vendor_cli.is_signed_in(spec):
+        return f"via {product} (signed in)"
+    return f"via {product}: not signed in, run `thundercat login {name}`"
+
+
 async def ask(team: Team, name: str, prompt: str, consult: list[str], stream: bool) -> int:
+    if team.backend(name) == "cli":  # the vendor CLI returns its answer in one piece
+        print(await team.ask(name, prompt, consult=consult))
+        return 0
     agent = team.agent(name, consult=consult)
     if stream:
         await _stream(team, agent, prompt)
@@ -117,6 +145,12 @@ async def ask(team: Team, name: str, prompt: str, consult: list[str], stream: bo
 
 async def chat(team: Team, name: str, consult: list[str], stream: bool) -> int:
     spec = team.spec(name)
+    if team.backend(name) == "cli":
+        program = vendor_cli.find_executable(spec) or spec.cli_program
+        raise BackendError(
+            f"chat needs {spec.api_key_env}; for an interactive session on your account, "
+            f"run {program} directly."
+        )
     agent = team.agent(name, consult=consult)
     print(f"Chatting with {spec.label} ({spec.model}). /exit or Ctrl-D to quit.", file=sys.stderr)
     history: list[TResponseInputItem] = []

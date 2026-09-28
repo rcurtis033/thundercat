@@ -41,9 +41,9 @@ def test_agents_shows_models_reasoning_and_key_status(monkeypatch, capsys):
     assert cli.main(["agents"]) == 0
     gpt, grok = capsys.readouterr().out.splitlines()
     assert gpt.split()[:5] == ["gpt", "GPT", "(OpenAI)", "gpt-6-astra", "reasoning=max"]
-    assert gpt.endswith("key set")
+    assert gpt.endswith("via API key")
     assert grok.split()[:5] == ["grok", "Grok", "(xAI)", "grok-4.7", "reasoning=xhigh"]
-    assert grok.endswith("missing XAI_API_KEY")
+    assert grok.endswith("not set up: set XAI_API_KEY, or install Grok Build and sign in")
 
 
 def test_ask_prints_the_final_answer(use_models, capsys):

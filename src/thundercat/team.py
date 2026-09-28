@@ -2,15 +2,18 @@
 
 OpenAI and xAI both serve the Responses API, so each agent is an SDK `Agent` whose model
 is an `AsyncOpenAI` client pointed at its provider's base URL. Everything else — the
-tool loop, tools, turn limits — is shared.
+tool loop, tools, turn limits — is shared. Without an API key, an agent can instead run
+through its vendor's signed-in CLI (see `vendor_cli`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 from agents import (
     Agent,
+    FunctionTool,
     ModelSettings,
     OpenAIResponsesModel,
     RunConfig,
@@ -19,11 +22,14 @@ from agents import (
     RunResultStreaming,
     Tool,
     TResponseInputItem,
+    default_tool_error_function,
+    function_tool,
 )
 from agents.models.interface import Model
 from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 
+from . import vendor_cli
 from .config import REQUEST_TIMEOUT_SECONDS, AgentSpec, Settings
 from .tools import Workspace, workspace_tools
 
@@ -49,7 +55,11 @@ ModelFactory = Callable[[AgentSpec], Model]
 
 
 class AgentNotConfiguredError(RuntimeError):
-    """The agent's API key is missing."""
+    """The agent has no way to run: no API key and no signed-in vendor CLI."""
+
+
+class BackendError(RuntimeError):
+    """The requested feature is not available on the agent's backend."""
 
 
 class UnknownAgentError(ValueError):
@@ -59,9 +69,11 @@ class UnknownAgentError(ValueError):
 def build_model(spec: AgentSpec) -> Model:
     """An Agents SDK model that calls `spec`'s provider."""
     if not spec.api_key:
+        cli = vendor_cli.vendor(spec)
         raise AgentNotConfiguredError(
-            f"The {spec.name} agent needs an API key: set {spec.api_key_env} "
-            "in your environment or in a .env file."
+            f"The {spec.name} agent needs {spec.api_key_env} (in your environment or a .env "
+            f"file), or {cli.product} signed in to your account: install it "
+            f"(`{cli.install}`) and run `thundercat login {spec.name}`."
         )
     client = AsyncOpenAI(
         api_key=spec.api_key, base_url=spec.base_url, timeout=REQUEST_TIMEOUT_SECONDS
@@ -99,24 +111,21 @@ class Team:
             known = ", ".join(self.settings.agents)
             raise UnknownAgentError(f"Unknown agent {name!r}; choose from: {known}") from None
 
+    def backend(self, name: str) -> Literal["api", "cli"]:
+        """Where agent `name` runs: its provider's API, or its vendor's signed-in CLI."""
+        spec = self.spec(name)
+        if spec.backend != "auto":
+            return spec.backend
+        if spec.api_key or vendor_cli.find_executable(spec) is None:
+            return "api"
+        return "cli"
+
     def agent(self, name: str, *, consult: Sequence[str] = ()) -> Agent:
-        """Build agent `name`. Agents listed in `consult` become tools it can call."""
+        """Build agent `name` on the API backend; agents in `consult` become tools it can call."""
         spec = self.spec(name)
         tools = list(self._tools)
         peers = [peer for peer in dict.fromkeys(consult) if peer != name]
-        for peer in peers:
-            peer_spec = self.spec(peer)
-            tools.append(
-                self.agent(peer).as_tool(
-                    tool_name=f"ask_{peer}",
-                    tool_description=(
-                        f"Ask the {peer_spec.label} agent ({peer_spec.model}) to work on a "
-                        "self-contained task or question and return its answer."
-                    ),
-                    run_config=self.run_config(),
-                    max_turns=self.settings.max_turns,
-                )
-            )
+        tools.extend(self._peer_tool(peer) for peer in peers)
         instructions = INSTRUCTIONS.format(label=spec.label, model=spec.model)
         if peers:
             instructions += PEER_INSTRUCTIONS.format(tools=", ".join(f"ask_{p}" for p in peers))
@@ -145,5 +154,34 @@ class Team:
 
     async def ask(self, name: str, task: str, *, consult: Sequence[str] = ()) -> str:
         """Run agent `name` on `task` and return its final answer."""
+        spec = self.spec(name)
+        if self.backend(name) == "cli":
+            if consult:
+                raise BackendError(
+                    f"The {name} agent is running through {vendor_cli.vendor(spec).product}, "
+                    f"which cannot consult other agents; set {spec.api_key_env} to use --consult."
+                )
+            return await vendor_cli.run(spec, self.settings, task)
         result = await self.run(self.agent(name, consult=consult), task)
         return str(result.final_output)
+
+    def _peer_tool(self, peer: str) -> FunctionTool:
+        spec = self.spec(peer)
+
+        async def consult(task: str) -> str:
+            """Hand a task to another agent and return its answer.
+
+            Args:
+                task: A complete, self-contained task or question; the agent sees nothing else.
+            """
+            return await self.ask(peer, task)
+
+        return function_tool(
+            consult,
+            name_override=f"ask_{peer}",
+            description_override=(
+                f"Ask the {spec.label} agent ({spec.model}) to work on a self-contained task "
+                "or question and return its answer."
+            ),
+            failure_error_function=default_tool_error_function,
+        )

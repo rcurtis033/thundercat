@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,10 +11,24 @@ from typing import Any
 import pytest
 from agents.testing import ScriptedModel
 
+from thundercat import vendor_cli
 from thundercat.config import Settings, load_settings
 from thundercat.team import Team
 
 TEST_ENV = {"OPENAI_API_KEY": "sk-test-openai", "XAI_API_KEY": "xai-test-key"}
+
+
+@pytest.fixture(autouse=True)
+def hide_installed_vendor_clis(request, monkeypatch):
+    """Keep offline tests off any real codex/grok on this machine; they pass fakes by path."""
+    if request.node.get_closest_marker("live"):
+        return
+    real = vendor_cli.find_executable
+    monkeypatch.setattr(
+        vendor_cli,
+        "find_executable",
+        lambda spec: real(spec) if os.path.isabs(spec.cli_program) else None,
+    )
 
 
 @pytest.fixture
