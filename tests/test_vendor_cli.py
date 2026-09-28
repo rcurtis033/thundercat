@@ -40,7 +40,10 @@ args = sys.argv[1:]
 record = {"program": "grok", "argv": args}
 if "--prompt-file" in args:
     record["task"] = Path(args[args.index("--prompt-file") + 1]).read_text()
-    print(json.dumps({"type": "result", "result": "grok says: " + record["task"]}))
+    # The shape Grok Build 1.0.41 prints for --output-format json.
+    reply = {"text": "grok says: " + record["task"], "stopReason": "end_turn",
+             "sessionId": "s-1", "thought": "(reasoning summary)", "usage": {}}
+    print(json.dumps(reply, indent=2))
 with open(os.environ["FAKE_CLI_LOG"], "a") as log:
     log.write(json.dumps(record) + "\\n")
 """
@@ -217,6 +220,7 @@ def test_agents_command_reports_cli_sign_in_state(clis, monkeypatch, capsys):
 @pytest.mark.parametrize(
     ("output", "answer"),
     [
+        ('{\n  "text": "the answer",\n  "thought": "not this"\n}', "the answer"),
         ('{"type": "result", "result": "the answer"}', "the answer"),
         ('progress...\n{"response": "last-line json"}', "last-line json"),
         ("plain text answer\n", "plain text answer"),

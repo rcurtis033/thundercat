@@ -1,0 +1,23 @@
+{
+  "enabledMcpjsonServers": ["thundercat"],
+  "permissions": {
+    "allow": [
+      "mcp__thundercat__ask_gpt",
+      "mcp__thundercat__ask_grok",
+      "Bash(uv run thundercat:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

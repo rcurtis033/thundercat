@@ -162,7 +162,11 @@ def _grok_command(
 
 
 def _grok_answer(output: str) -> str:
-    """Pull the answer out of `--output-format json`, falling back to the raw text."""
+    """Pull the answer out of `--output-format json`, falling back to the raw text.
+
+    Grok Build prints one pretty-printed object: {"text": <answer>, "stopReason": ...,
+    "sessionId": ..., "thought": ..., "usage": {...}, ...}.
+    """
     text = _ANSI.sub("", output).strip()
     for candidate in (text, text.rsplit("\n", 1)[-1]):
         try:
@@ -172,7 +176,7 @@ def _grok_answer(output: str) -> str:
         if isinstance(data, dict):
             if data.get("is_error") or data.get("error"):
                 raise VendorCliError(f"Grok Build reported an error: {candidate[:2000]}")
-            for key in ("result", "response", "text", "content", "output"):
+            for key in ("text", "result", "response", "content", "output"):
                 value = data.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()

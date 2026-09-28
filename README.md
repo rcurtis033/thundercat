@@ -41,6 +41,8 @@ Then, for each agent, either:
   uv run thundercat login grok
   ```
 
+  On Linux, Grok Build's read-only sandbox also needs bubblewrap (`apt install bubblewrap`).
+
 - **Or use an API key** from https://platform.openai.com/api-keys or
   https://console.x.ai: `cp .env.example .env` and fill it in (it is gitignored), or
   export the variables. For Claude Code on the web, add them in the cloud environment's
@@ -67,6 +69,14 @@ Open the repo in Claude Code, approve the server when prompted (or check `/mcp`)
 for them by name — for example *"ask_grok to review this diff"* or *"get GPT and Grok's
 takes on this design, then compare"*. Each call is an independent agent run: it sees only
 the task text Claude sends, reads files in this repo as needed, and returns its answer.
+
+`CLAUDE.md` tells Claude to use the agents on its own whenever they would help (second
+opinions, reviews, stuck debugging), and `.claude/settings.json` enables the server and
+allows both tools without prompts. On Claude Code on the web, a SessionStart hook
+(`.claude/hooks/session-start.sh`) installs the Python environment, both vendor CLIs and
+bubblewrap, then reports whether each agent is ready. Sign-ins do not carry over between
+web sessions: when an agent shows "not signed in", Claude runs `thundercat login` and hands
+you the link and code — or set the API keys in the environment settings once instead.
 
 Maximum-effort reasoning can take several minutes per call. If Claude Code gives up
 waiting, raise its MCP tool timeout (the `MCP_TOOL_TIMEOUT` environment variable, in
