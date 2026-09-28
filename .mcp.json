@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "thundercat": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--quiet", "thundercat", "mcp"]
+    }
+  }
+}
